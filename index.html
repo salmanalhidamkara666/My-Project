@@ -1,0 +1,761 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Inventory & Order Manager</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+  <!-- Phosphor Icons untuk UI -->
+  <script src="https://unpkg.com/@phosphor-icons/web"></script>
+  
+  <style>
+    /* Custom Scrollbar */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #f1f1f1; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+    .loader { border: 4px solid #f3f3f3; border-top: 4px solid #3b82f6; border-radius: 50%; width: 30px; height: 30px; animation: spin 1s linear infinite; }
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    [v-cloak] { display: none; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans antialiased">
+
+  <!-- Variabel URL yang dilempar dari backend GAS -->
+  <script>
+    let PUBLIC_URL_ID = null;
+    let WEB_APP_URL = "";
+    
+    // Mengambil URL web app untuk QR code (jika di lingkungan GAS)
+    if (typeof google !== 'undefined' && google.script) {
+      google.script.run.withSuccessHandler(url => WEB_APP_URL = url).getScriptUrl();
+    }
+  </script>
+
+  <!-- NOTIFIKASI TOAST -->
+  <div id="toast" class="fixed top-5 right-5 z-50 transform transition-transform translate-x-full bg-slate-800 text-white px-6 py-3 rounded-lg shadow-lg">
+    <span id="toast-msg">Pesan disini</span>
+  </div>
+
+  <!-- HALAMAN PUBLIK (Jika ada parameter ?id=) -->
+  <div id="public-view" class="hidden min-h-screen p-4 sm:p-8">
+    <div class="max-w-md mx-auto bg-white rounded-2xl shadow-xl overflow-hidden">
+      <div id="public-loading" class="p-8 flex justify-center"><div class="loader"></div></div>
+      <div id="public-content" class="hidden">
+        <img id="pub-img" src="" alt="Produk" class="w-full h-48 object-cover bg-slate-100" onerror="this.src='https://via.placeholder.com/400x200?text=No+Image'">
+        <div class="p-6">
+          <div class="text-xs font-bold text-blue-600 mb-1" id="pub-kode"></div>
+          <h2 class="text-2xl font-bold mb-2" id="pub-nama"></h2>
+          <div class="flex items-center justify-between bg-slate-50 p-3 rounded-lg mb-6 border border-slate-100">
+            <span class="text-slate-500">Stok Tersedia</span>
+            <span class="text-xl font-bold text-slate-800" id="pub-stok"></span>
+          </div>
+          <h3 class="font-bold text-slate-700 mb-3 flex items-center gap-2"><i class="ph ph-clock-counter-clockwise"></i> 5 Transaksi Terakhir</h3>
+          <ul id="pub-transactions" class="space-y-3 text-sm"></ul>
+        </div>
+      </div>
+      <div id="public-error" class="hidden p-8 text-center text-red-500 font-medium">Produk tidak ditemukan.</div>
+    </div>
+  </div>
+
+  <!-- HALAMAN LOGIN -->
+  <div id="login-view" class="hidden min-h-screen flex items-center justify-center p-4">
+    <div class="bg-white p-8 rounded-2xl shadow-lg w-full max-w-md border border-slate-100">
+      <div class="text-center mb-8">
+        <div class="inline-flex items-center justify-center w-16 h-16 bg-blue-100 text-blue-600 rounded-full mb-4">
+          <i class="ph ph-package text-3xl"></i>
+        </div>
+        <h1 class="text-2xl font-bold text-slate-800">Smart Inventory</h1>
+        <p class="text-slate-500 text-sm">Masuk untuk mengelola stok & AI</p>
+      </div>
+      <form id="login-form" onsubmit="handleLogin(event)">
+        <div class="mb-4">
+          <label class="block text-sm font-medium text-slate-700 mb-1">Username</label>
+          <input type="text" id="username" required class="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none">
+        </div>
+        <div class="mb-6">
+          <label class="block text-sm font-medium text-slate-700 mb-1">Password</label>
+          <input type="password" id="password" required class="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none">
+        </div>
+        <button type="submit" id="btn-login" class="w-full bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition font-medium flex justify-center items-center gap-2">
+          <span>Masuk</span>
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- APLIKASI UTAMA (Admin/Staff) -->
+  <div id="app-view" class="hidden h-screen flex flex-col md:flex-row overflow-hidden">
+    
+    <!-- Sidebar -->
+    <aside class="w-full md:w-64 bg-slate-900 text-slate-300 flex flex-col shrink-0">
+      <div class="p-6 text-white text-xl font-bold flex items-center gap-2 border-b border-slate-800">
+        <i class="ph ph-codesandbox-logo text-blue-400"></i> SmartInv
+      </div>
+      <nav class="flex-1 p-4 space-y-2 overflow-y-auto">
+        <a href="#" onclick="nav('dashboard')" class="nav-btn flex items-center gap-3 px-4 py-3 rounded-lg hover:bg-slate-800 hover:text-white transition" data-target="dashboard"><i class="ph ph-squares-four text-lg"></i> Dashboard</a>
+        <a href="#" onclick="nav('products')" class="nav-btn flex items-center gap-3 px-4 py-3 rounded-lg hover:bg-slate-800 hover:text-white transition admin-only" data-target="products"><i class="ph ph-package text-lg"></i> Produk</a>
+        <a href="#" onclick="nav('transactions')" class="nav-btn flex items-center gap-3 px-4 py-3 rounded-lg hover:bg-slate-800 hover:text-white transition" data-target="transactions"><i class="ph ph-swap text-lg"></i> Transaksi</a>
+        <a href="#" onclick="nav('forecasting')" class="nav-btn flex items-center gap-3 px-4 py-3 rounded-lg hover:bg-slate-800 hover:text-white transition admin-only" data-target="forecasting"><i class="ph ph-brain text-lg text-purple-400"></i> AI Forecasting</a>
+      </nav>
+      <div class="p-4 border-t border-slate-800">
+        <div class="flex items-center gap-3 mb-4 px-2">
+          <div class="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-white"><i class="ph ph-user"></i></div>
+          <div class="text-sm">
+            <div class="text-white font-medium" id="user-display">User</div>
+            <div class="text-slate-500 text-xs" id="role-display">Role</div>
+          </div>
+        </div>
+        <button onclick="logout()" class="w-full flex items-center justify-center gap-2 px-4 py-2 bg-slate-800 hover:bg-red-500/20 hover:text-red-400 text-slate-400 rounded-lg transition">
+          <i class="ph ph-sign-out"></i> Keluar
+        </button>
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="flex-1 overflow-y-auto bg-slate-50 relative">
+      
+      <!-- LOADING OVERLAY -->
+      <div id="global-loading" class="hidden absolute inset-0 bg-white/80 z-40 flex items-center justify-center backdrop-blur-sm">
+        <div class="loader"></div>
+      </div>
+
+      <!-- PAGE: DASHBOARD -->
+      <section id="page-dashboard" class="page-content p-6 sm:p-10 hidden">
+        <h2 class="text-2xl font-bold text-slate-800 mb-6">Dashboard Ringkasan</h2>
+        
+        <!-- Stats Row -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+          <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+            <div class="text-slate-500 text-sm font-medium mb-1">Total Produk</div>
+            <div class="text-3xl font-bold text-slate-800" id="dash-total-prod">0</div>
+          </div>
+          <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+            <div class="text-slate-500 text-sm font-medium mb-1">Total Stok Item</div>
+            <div class="text-3xl font-bold text-blue-600" id="dash-total-stock">0</div>
+          </div>
+          <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+            <div class="text-slate-500 text-sm font-medium mb-1">Nilai Inventaris</div>
+            <div class="text-3xl font-bold text-emerald-600" id="dash-value">Rp 0</div>
+          </div>
+          <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+            <div class="text-slate-500 text-sm font-medium mb-1">Transaksi Hari Ini</div>
+            <div class="text-3xl font-bold text-purple-600" id="dash-trx-today">0</div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          <!-- Chart -->
+          <div class="lg:col-span-2 bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+            <h3 class="text-lg font-bold text-slate-800 mb-4">Penjualan 7 Hari Terakhir</h3>
+            <canvas id="salesChart" height="100"></canvas>
+          </div>
+          
+          <!-- Low Stock Alert -->
+          <div class="bg-white p-6 rounded-2xl shadow-sm border border-red-100">
+            <h3 class="text-lg font-bold text-red-600 mb-4 flex items-center gap-2"><i class="ph ph-warning-circle"></i> Stok Menipis</h3>
+            <div class="space-y-3" id="dash-low-stock">
+              <!-- Injected by JS -->
+            </div>
+            <div id="dash-low-stock-empty" class="text-sm text-slate-500 text-center py-4 hidden">Semua stok aman!</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- PAGE: PRODUCTS -->
+      <section id="page-products" class="page-content p-6 sm:p-10 hidden">
+        <div class="flex justify-between items-center mb-6">
+          <h2 class="text-2xl font-bold text-slate-800">Manajemen Produk</h2>
+          <button onclick="openProductModal()" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center gap-2 shadow-sm">
+            <i class="ph ph-plus"></i> Tambah Produk
+          </button>
+        </div>
+        
+        <div class="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-sm whitespace-nowrap">
+              <thead class="bg-slate-50 text-slate-600 font-medium border-b border-slate-200">
+                <tr>
+                  <th class="py-4 px-6">Kode</th>
+                  <th class="py-4 px-6">Nama Produk</th>
+                  <th class="py-4 px-6">Stok (Min)</th>
+                  <th class="py-4 px-6">Harga Beli</th>
+                  <th class="py-4 px-6">Harga Jual</th>
+                  <th class="py-4 px-6 text-right">Aksi</th>
+                </tr>
+              </thead>
+              <tbody id="product-table-body" class="divide-y divide-slate-100">
+                <!-- Injected by JS -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- PAGE: TRANSACTIONS -->
+      <section id="page-transactions" class="page-content p-6 sm:p-10 hidden">
+        <h2 class="text-2xl font-bold text-slate-800 mb-6">Input Transaksi</h2>
+        
+        <div class="max-w-xl bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-100">
+          <form id="trx-form" onsubmit="submitTransaction(event)">
+            <div class="mb-5">
+              <label class="block text-sm font-medium text-slate-700 mb-2">Pilih Produk</label>
+              <select id="trx-product" required class="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white">
+                <option value="">-- Memuat Produk --</option>
+              </select>
+            </div>
+            
+            <div class="grid grid-cols-2 gap-4 mb-6">
+              <div>
+                <label class="block text-sm font-medium text-slate-700 mb-2">Jenis Transaksi</label>
+                <div class="flex gap-4">
+                  <label class="flex items-center gap-2 cursor-pointer">
+                    <input type="radio" name="trx_type" value="sale" checked class="text-blue-600 focus:ring-blue-500">
+                    <span class="text-sm">Penjualan (-)</span>
+                  </label>
+                  <label class="flex items-center gap-2 cursor-pointer">
+                    <input type="radio" name="trx_type" value="restock" class="text-emerald-600 focus:ring-emerald-500">
+                    <span class="text-sm">Restok (+)</span>
+                  </label>
+                </div>
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-slate-700 mb-2">Kuantitas (Qty)</label>
+                <input type="number" id="trx-qty" required min="1" class="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+              </div>
+            </div>
+            
+            <button type="submit" class="w-full bg-slate-800 text-white py-3 rounded-lg hover:bg-slate-900 transition font-medium">
+              Simpan Transaksi
+            </button>
+          </form>
+        </div>
+      </section>
+
+      <!-- PAGE: FORECASTING -->
+      <section id="page-forecasting" class="page-content p-6 sm:p-10 hidden">
+        <div class="flex justify-between items-center mb-6">
+          <div>
+            <h2 class="text-2xl font-bold text-slate-800 flex items-center gap-2">
+              <i class="ph ph-magic-wand text-purple-600"></i> AI Demand Forecasting
+            </h2>
+            <p class="text-slate-500 text-sm mt-1">Prediksi kebutuhan stok 30 hari ke depan berbasis data historis.</p>
+          </div>
+          <button onclick="runAIForecasting()" class="bg-purple-600 text-white px-5 py-2 rounded-lg hover:bg-purple-700 flex items-center gap-2 shadow-sm font-medium">
+            <i class="ph ph-brain"></i> Jalankan Analisis AI
+          </button>
+        </div>
+        
+        <div class="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+          <div class="p-6 border-b border-slate-100 bg-slate-50/50">
+            <h3 class="font-bold text-slate-700">Hasil Prediksi Terakhir</h3>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-sm">
+              <thead class="bg-slate-50 text-slate-600 font-medium border-b border-slate-200">
+                <tr>
+                  <th class="py-4 px-6">Produk</th>
+                  <th class="py-4 px-6 text-center">Stok Saat Ini</th>
+                  <th class="py-4 px-6 text-center">Prediksi 30 Hari</th>
+                  <th class="py-4 px-6 text-center">Saran Restok</th>
+                  <th class="py-4 px-6">Alasan AI</th>
+                </tr>
+              </thead>
+              <tbody id="forecast-table-body" class="divide-y divide-slate-100">
+                <tr><td colspan="5" class="py-8 text-center text-slate-500">Belum ada data. Silakan jalankan analisis AI.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- MODAL: ADD/EDIT PRODUCT -->
+  <div id="modal-product" class="fixed inset-0 bg-slate-900/50 z-50 hidden flex items-center justify-center backdrop-blur-sm p-4">
+    <div class="bg-white rounded-2xl shadow-xl w-full max-w-2xl overflow-hidden flex flex-col max-h-full">
+      <div class="p-6 border-b border-slate-100 flex justify-between items-center">
+        <h3 class="text-xl font-bold text-slate-800" id="modal-title">Tambah Produk</h3>
+        <button onclick="closeProductModal()" class="text-slate-400 hover:text-slate-700"><i class="ph ph-x text-xl"></i></button>
+      </div>
+      <div class="p-6 overflow-y-auto">
+        <form id="product-form" onsubmit="saveProduct(event)">
+          <input type="hidden" id="prod-id">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-5">
+            <div>
+              <label class="block text-sm font-medium text-slate-700 mb-1">Kode Produk</label>
+              <input type="text" id="prod-kode" required class="w-full px-4 py-2 border border-slate-300 rounded-lg">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-slate-700 mb-1">Nama Produk</label>
+              <input type="text" id="prod-nama" required class="w-full px-4 py-2 border border-slate-300 rounded-lg">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-slate-700 mb-1">Stok Awal (Hanya untuk produk baru)</label>
+              <input type="number" id="prod-stok" required min="0" class="w-full px-4 py-2 border border-slate-300 rounded-lg">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-slate-700 mb-1">Stok Minimal</label>
+              <input type="number" id="prod-min" required min="0" class="w-full px-4 py-2 border border-slate-300 rounded-lg">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-slate-700 mb-1">Harga Beli (Rp)</label>
+              <input type="number" id="prod-hb" required min="0" class="w-full px-4 py-2 border border-slate-300 rounded-lg">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-slate-700 mb-1">Harga Jual (Rp)</label>
+              <input type="number" id="prod-hj" required min="0" class="w-full px-4 py-2 border border-slate-300 rounded-lg">
+            </div>
+            <div class="sm:col-span-2">
+              <label class="block text-sm font-medium text-slate-700 mb-1">URL Gambar</label>
+              <input type="url" id="prod-url" placeholder="https://..." class="w-full px-4 py-2 border border-slate-300 rounded-lg">
+            </div>
+          </div>
+          <div class="mt-8 flex justify-end gap-3">
+            <button type="button" onclick="closeProductModal()" class="px-5 py-2 text-slate-600 hover:bg-slate-100 rounded-lg font-medium">Batal</button>
+            <button type="submit" class="px-5 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">Simpan</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: QR CODE -->
+  <div id="modal-qr" class="fixed inset-0 bg-slate-900/50 z-50 hidden flex items-center justify-center backdrop-blur-sm p-4">
+    <div class="bg-white rounded-2xl shadow-xl w-full max-w-sm overflow-hidden text-center">
+      <div class="p-6 border-b border-slate-100 flex justify-between items-center">
+        <h3 class="text-lg font-bold text-slate-800">QR Code Produk</h3>
+        <button onclick="closeQrModal()" class="text-slate-400 hover:text-slate-700"><i class="ph ph-x text-xl"></i></button>
+      </div>
+      <div class="p-8 flex flex-col items-center">
+        <div id="qrcode-container" class="mb-4 p-4 border-2 border-slate-100 rounded-xl inline-block bg-white"></div>
+        <p class="text-sm text-slate-500 mb-4">Scan untuk melihat info publik produk ini.</p>
+        <a id="qr-link" href="#" target="_blank" class="text-blue-600 text-sm hover:underline break-all">Buka Link</a>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    /* --- UTILITIES --- */
+    let chartInstance = null;
+    let currentUser = null;
+    let allProducts = [];
+
+    function showToast(msg, isError = false) {
+      const toast = document.getElementById('toast');
+      document.getElementById('toast-msg').innerText = msg;
+      toast.classList.remove('translate-x-full');
+      toast.style.backgroundColor = isError ? '#ef4444' : '#10b981';
+      setTimeout(() => toast.classList.add('translate-x-full'), 3000);
+    }
+
+    function showLoading() { document.getElementById('global-loading').classList.remove('hidden'); }
+    function hideLoading() { document.getElementById('global-loading').classList.add('hidden'); }
+    function formatRp(num) { return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(num); }
+
+    // Hashing function (SHA-256) via Web Crypto API
+    async function hashPassword(password) {
+      const msgUint8 = new TextEncoder().encode(password);
+      const hashBuffer = await crypto.subtle.digest('SHA-256', msgUint8);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+
+    /* --- ROUTING & SESSION --- */
+    function init() {
+      // Deteksi ID dari parameter URL (mendukung GAS & Browser biasa)
+      if (typeof google !== 'undefined' && google.script && google.script.url) {
+        google.script.url.getLocation(function(location) {
+          const id = location.parameter ? location.parameter.id : null;
+          if (id) {
+            setupPublicView(id);
+          } else {
+            checkLoginSession();
+          }
+        });
+      } else {
+        // Fallback untuk browser biasa / Canvas preview
+        const params = new URLSearchParams(window.location.search);
+        const id = params.get('id');
+        if (id) {
+          setupPublicView(id);
+        } else {
+          checkLoginSession();
+        }
+      }
+    }
+
+    function setupPublicView(id) {
+      PUBLIC_URL_ID = id;
+      document.getElementById('public-view').classList.remove('hidden');
+      loadPublicData(id);
+    }
+
+    function checkLoginSession() {
+      // Check session
+      const sessionUser = sessionStorage.getItem('smartinv_user');
+      if (sessionUser) {
+        currentUser = JSON.parse(sessionUser);
+        document.getElementById('user-display').innerText = currentUser.username;
+        document.getElementById('role-display').innerText = currentUser.role.toUpperCase();
+        
+        // Role based access
+        if (currentUser.role !== 'owner') {
+          document.querySelectorAll('.admin-only').forEach(el => el.style.display = 'none');
+        }
+
+        document.getElementById('app-view').classList.remove('hidden');
+        nav('dashboard'); // Default page
+      } else {
+        document.getElementById('login-view').classList.remove('hidden');
+      }
+    }
+
+    function nav(page) {
+      document.querySelectorAll('.page-content').forEach(el => el.classList.add('hidden'));
+      document.querySelectorAll('.nav-btn').forEach(el => {
+        el.classList.remove('bg-slate-800', 'text-white');
+        el.classList.add('text-slate-300');
+        if (el.dataset.target === page) {
+          el.classList.add('bg-slate-800', 'text-white');
+          el.classList.remove('text-slate-300');
+        }
+      });
+      document.getElementById('page-' + page).classList.remove('hidden');
+
+      // Load specific data per page
+      if (page === 'dashboard') loadDashboard();
+      if (page === 'products') loadProducts();
+      if (page === 'transactions') loadTransactionForm();
+      if (page === 'forecasting') loadForecastingData();
+    }
+
+    /* --- LOGIN LOGIC --- */
+    async function handleLogin(e) {
+      e.preventDefault();
+      const user = document.getElementById('username').value;
+      const pass = document.getElementById('password').value;
+      const btn = document.getElementById('btn-login');
+      
+      btn.innerHTML = '<div class="loader" style="width:20px;height:20px;border-width:3px"></div>';
+      btn.disabled = true;
+
+      const hash = await hashPassword(pass);
+      
+      google.script.run.withSuccessHandler(res => {
+        if (res.success) {
+          sessionStorage.setItem('smartinv_user', JSON.stringify(res.user));
+          window.location.reload();
+        } else {
+          showToast(res.message, true);
+          btn.innerHTML = 'Masuk';
+          btn.disabled = false;
+        }
+      }).loginUser(user, hash);
+    }
+
+    function logout() {
+      sessionStorage.removeItem('smartinv_user');
+      window.location.reload();
+    }
+
+    /* --- DASHBOARD --- */
+    function loadDashboard() {
+      showLoading();
+      google.script.run.withSuccessHandler(data => {
+        document.getElementById('dash-total-prod').innerText = data.totalProducts;
+        document.getElementById('dash-total-stock').innerText = data.totalStock;
+        document.getElementById('dash-value').innerText = formatRp(data.inventoryValue);
+        document.getElementById('dash-trx-today').innerText = data.todayTransactions;
+
+        // Render Low Stock
+        const lowStockContainer = document.getElementById('dash-low-stock');
+        lowStockContainer.innerHTML = '';
+        if (data.lowStockProducts.length === 0) {
+          document.getElementById('dash-low-stock-empty').classList.remove('hidden');
+        } else {
+          document.getElementById('dash-low-stock-empty').classList.add('hidden');
+          data.lowStockProducts.forEach(p => {
+            lowStockContainer.innerHTML += `
+              <div class="flex justify-between items-center p-3 bg-red-50 rounded-lg border border-red-100">
+                <div>
+                  <div class="font-bold text-slate-800 text-sm">${p.nama}</div>
+                  <div class="text-xs text-slate-500">Min: ${p.stok_minimal}</div>
+                </div>
+                <div class="text-red-600 font-bold bg-white px-3 py-1 rounded shadow-sm">${p.stok}</div>
+              </div>
+            `;
+          });
+        }
+
+        // Render Chart
+        if (chartInstance) chartInstance.destroy();
+        const ctx = document.getElementById('salesChart').getContext('2d');
+        chartInstance = new Chart(ctx, {
+          type: 'line',
+          data: {
+            labels: data.chartData.labels,
+            datasets: [{
+              label: 'Penjualan (Qty)',
+              data: data.chartData.data,
+              borderColor: '#3b82f6',
+              backgroundColor: 'rgba(59, 130, 246, 0.1)',
+              borderWidth: 2,
+              fill: true,
+              tension: 0.4
+            }]
+          },
+          options: { responsive: true, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
+        });
+
+        hideLoading();
+      }).getDashboardData();
+    }
+
+    /* --- PRODUCTS --- */
+    function loadProducts() {
+      showLoading();
+      google.script.run.withSuccessHandler(data => {
+        allProducts = data;
+        const tbody = document.getElementById('product-table-body');
+        tbody.innerHTML = '';
+        data.forEach(p => {
+          tbody.innerHTML += `
+            <tr class="hover:bg-slate-50 transition">
+              <td class="py-3 px-6"><span class="bg-slate-100 text-slate-600 px-2 py-1 rounded text-xs font-mono">${p.kode}</span></td>
+              <td class="py-3 px-6 font-medium text-slate-800">${p.nama}</td>
+              <td class="py-3 px-6">
+                <span class="${Number(p.stok) <= Number(p.stok_minimal) ? 'text-red-600 font-bold' : ''}">${p.stok}</span> 
+                <span class="text-slate-400 text-xs">(${p.stok_minimal})</span>
+              </td>
+              <td class="py-3 px-6 text-slate-500">${formatRp(p.harga_beli)}</td>
+              <td class="py-3 px-6 text-slate-500">${formatRp(p.harga_jual)}</td>
+              <td class="py-3 px-6 text-right space-x-2">
+                <button onclick="showQrCode('${p.id}')" class="text-slate-400 hover:text-slate-800" title="QR Code"><i class="ph ph-qr-code text-xl"></i></button>
+                <button onclick="editProduct('${p.id}')" class="text-blue-500 hover:text-blue-700" title="Edit"><i class="ph ph-pencil-simple text-xl"></i></button>
+              </td>
+            </tr>
+          `;
+        });
+        hideLoading();
+      }).getProducts();
+    }
+
+    function openProductModal() {
+      document.getElementById('product-form').reset();
+      document.getElementById('prod-id').value = '';
+      document.getElementById('prod-stok').disabled = false; // Boleh isi stok awal
+      document.getElementById('modal-title').innerText = 'Tambah Produk';
+      document.getElementById('modal-product').classList.remove('hidden');
+    }
+
+    function closeProductModal() {
+      document.getElementById('modal-product').classList.add('hidden');
+    }
+
+    function editProduct(id) {
+      const p = allProducts.find(x => x.id === id);
+      if (!p) return;
+      document.getElementById('prod-id').value = p.id;
+      document.getElementById('prod-kode').value = p.kode;
+      document.getElementById('prod-nama').value = p.nama;
+      document.getElementById('prod-stok').value = p.stok;
+      document.getElementById('prod-stok').disabled = true; // Tidak bisa edit stok langsung
+      document.getElementById('prod-min').value = p.stok_minimal;
+      document.getElementById('prod-hb').value = p.harga_beli;
+      document.getElementById('prod-hj').value = p.harga_jual;
+      document.getElementById('prod-url').value = p.gambar_url;
+      
+      document.getElementById('modal-title').innerText = 'Edit Produk';
+      document.getElementById('modal-product').classList.remove('hidden');
+    }
+
+    function saveProduct(e) {
+      e.preventDefault();
+      showLoading();
+      
+      const data = {
+        id: document.getElementById('prod-id').value,
+        kode: document.getElementById('prod-kode').value,
+        nama: document.getElementById('prod-nama').value,
+        stok: document.getElementById('prod-stok').value,
+        stok_minimal: document.getElementById('prod-min').value,
+        harga_beli: document.getElementById('prod-hb').value,
+        harga_jual: document.getElementById('prod-hj').value,
+        gambar_url: document.getElementById('prod-url').value
+      };
+
+      const endpoint = data.id ? 'updateProduct' : 'addProduct';
+      
+      google.script.run.withSuccessHandler(res => {
+        closeProductModal();
+        showToast(res.message, !res.success);
+        if(res.success) loadProducts();
+        else hideLoading();
+      })[endpoint](data);
+    }
+
+    /* --- QR CODE --- */
+    function showQrCode(id) {
+      if(!WEB_APP_URL) {
+        showToast('URL sistem belum tersedia, coba lagi sebentar.', true);
+        return;
+      }
+      const qrContainer = document.getElementById('qrcode-container');
+      qrContainer.innerHTML = '';
+      const fullUrl = WEB_APP_URL + '?id=' + id;
+      
+      new QRCode(qrContainer, {
+        text: fullUrl,
+        width: 150,
+        height: 150,
+        colorDark : "#0f172a",
+        colorLight : "#ffffff",
+        correctLevel : QRCode.CorrectLevel.H
+      });
+      
+      document.getElementById('qr-link').href = fullUrl;
+      document.getElementById('modal-qr').classList.remove('hidden');
+    }
+
+    function closeQrModal() {
+      document.getElementById('modal-qr').classList.add('hidden');
+    }
+
+    /* --- TRANSACTIONS --- */
+    function loadTransactionForm() {
+      showLoading();
+      google.script.run.withSuccessHandler(data => {
+        allProducts = data;
+        const select = document.getElementById('trx-product');
+        select.innerHTML = '<option value="">-- Pilih Produk --</option>';
+        data.forEach(p => {
+          select.innerHTML += `<option value="${p.id}">${p.kode} - ${p.nama} (Stok: ${p.stok})</option>`;
+        });
+        hideLoading();
+      }).getProducts();
+    }
+
+    function submitTransaction(e) {
+      e.preventDefault();
+      showLoading();
+      
+      const data = {
+        product_id: document.getElementById('trx-product').value,
+        qty: document.getElementById('trx-qty').value,
+        type: document.querySelector('input[name="trx_type"]:checked').value,
+        user: currentUser.username
+      };
+
+      google.script.run.withSuccessHandler(res => {
+        showToast(res.message, !res.success);
+        if(res.success) {
+          document.getElementById('trx-form').reset();
+          loadTransactionForm(); // Reload dropdown to get new stock
+        } else {
+          hideLoading();
+        }
+      }).recordTransaction(data);
+    }
+
+    /* --- FORECASTING --- */
+    function loadForecastingData() {
+      showLoading();
+      google.script.run.withSuccessHandler(data => {
+        renderForecastTable(data);
+        hideLoading();
+      }).getForecastingResults();
+    }
+
+    function runAIForecasting() {
+      if(!confirm('Proses ini membutuhkan waktu beberapa detik untuk analisis AI. Lanjutkan?')) return;
+      showLoading();
+      google.script.run.withSuccessHandler(res => {
+        showToast(res.message, !res.success);
+        if(res.success && res.data) {
+          renderForecastTable(res.data);
+        }
+        hideLoading();
+      }).runForecasting();
+    }
+
+    function renderForecastTable(data) {
+      const tbody = document.getElementById('forecast-table-body');
+      tbody.innerHTML = '';
+      if(!data || data.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" class="py-8 text-center text-slate-500">Belum ada data. Silakan jalankan analisis AI.</td></tr>';
+        return;
+      }
+      
+      data.forEach(r => {
+        tbody.innerHTML += `
+          <tr class="hover:bg-slate-50 transition">
+            <td class="py-4 px-6 font-medium text-slate-800">${r.product_name}</td>
+            <td class="py-4 px-6 text-center text-slate-600">${r.stok_saat_ini}</td>
+            <td class="py-4 px-6 text-center text-blue-600 font-bold">${r.prediksi_30hari}</td>
+            <td class="py-4 px-6 text-center text-emerald-600 font-bold">+${r.rekomendasi_restok}</td>
+            <td class="py-4 px-6 text-sm text-slate-500 whitespace-normal min-w-[250px]">${r.alasan}</td>
+          </tr>
+        `;
+      });
+    }
+
+    /* --- PUBLIC PAGE --- */
+    function loadPublicData(id) {
+      document.getElementById('public-loading').classList.remove('hidden');
+      document.getElementById('public-content').classList.add('hidden');
+      document.getElementById('public-error').classList.add('hidden');
+
+      google.script.run.withSuccessHandler(res => {
+        document.getElementById('public-loading').classList.add('hidden');
+        if (!res || !res.product) {
+          document.getElementById('public-error').classList.remove('hidden');
+          return;
+        }
+
+        const p = res.product;
+        if(p.gambar_url) document.getElementById('pub-img').src = p.gambar_url;
+        document.getElementById('pub-kode').innerText = p.kode;
+        document.getElementById('pub-nama').innerText = p.nama;
+        document.getElementById('pub-stok').innerText = p.stok;
+
+        const ul = document.getElementById('pub-transactions');
+        ul.innerHTML = '';
+        if(res.transactions.length === 0) {
+          ul.innerHTML = '<li class="text-slate-400 italic">Belum ada transaksi.</li>';
+        } else {
+          res.transactions.forEach(t => {
+            const dateStr = new Date(t.timestamp).toLocaleDateString('id-ID', {day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit'});
+            const isSale = t.type === 'sale';
+            const icon = isSale ? '<i class="ph ph-trend-down text-red-500"></i>' : '<i class="ph ph-trend-up text-emerald-500"></i>';
+            const color = isSale ? 'text-red-600' : 'text-emerald-600';
+            const sign = isSale ? '-' : '+';
+            const typeStr = isSale ? 'Terjual' : 'Restok';
+            
+            ul.innerHTML += `
+              <li class="flex justify-between items-center py-2 border-b border-slate-100 last:border-0">
+                <div class="flex items-center gap-3">
+                  <div class="w-8 h-8 rounded bg-slate-100 flex items-center justify-center">${icon}</div>
+                  <div>
+                    <div class="font-medium text-slate-800">${typeStr}</div>
+                    <div class="text-xs text-slate-400">${dateStr}</div>
+                  </div>
+                </div>
+                <div class="font-bold ${color}">${sign}${t.qty}</div>
+              </li>
+            `;
+          });
+        }
+        document.getElementById('public-content').classList.remove('hidden');
+
+      }).getPublicProductData(id);
+    }
+
+    // Initialize App
+    window.onload = init;
+  </script>
+</body>
+            </html>
